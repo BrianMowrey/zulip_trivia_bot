@@ -18,50 +18,45 @@ class TriviaQuizHandler:
             the open trivia database at opentdb.com.'''
 
     def handle_message(self, message: Dict[str, Any], bot_handler: Any) -> None:
+        print("message=", message)
         query = message['content']
-        if query == 'new':
-            try:
-                start_new_quiz(message, bot_handler)
+        print("query=",query)
+        if query == 'start game':
+                start_new_game(message, bot_handler)
                 return
-            except NotAvailableException:
-                bot_response = 'Uh-Oh! Trivia service is down.'
-                bot_handler.send_reply(message, bot_response)
-                return
-        elif query.startswith('answer'):
-            try:
-                (quiz_id, answer) = parse_answer(query)
-            except InvalidAnswerException:
-                bot_response = 'Invalid answer format'
-                bot_handler.send_reply(message, bot_response)
-                return
-            try:
-                quiz_payload = get_quiz_from_id(quiz_id, bot_handler)
-            except (KeyError, TypeError):
-                bot_response = 'Invalid quiz id'
-                bot_handler.send_reply(message, bot_response)
-                return
-            quiz = json.loads(quiz_payload)
-            start_new_question, bot_response = handle_answer(quiz, answer, quiz_id,
-                                                             bot_handler, message['sender_full_name'])
-            bot_handler.send_reply(message, bot_response)
-            if start_new_question:
-                start_new_quiz(message, bot_handler)
-            return
+        elif query == 'stop game':
+                stop_game(message, bot_handler)
         else:
-            bot_response = 'type "new" for a new question'
-        bot_handler.send_reply(message, bot_response)
-
+           # anything else is a answer to a question
+           pass
 def get_quiz_from_id(quiz_id: str, bot_handler: Any) -> str:
     return bot_handler.storage.get(quiz_id)
 
-def start_new_quiz(message: Dict[str, Any], bot_handler: Any) -> None:
-    quiz = get_trivia_quiz()
-    quiz_id = generate_quiz_id(bot_handler.storage)
-    bot_response = format_quiz_for_markdown(quiz_id, quiz)
-    widget_content = format_quiz_for_widget(quiz_id, quiz)
-    bot_handler.storage.put(quiz_id, json.dumps(quiz))
-    bot_handler.send_reply(message, bot_response, widget_content)
+def start_new_game(message: Dict[str, Any], bot_handler: Any) -> None:
+    bot_response = "Starting Game..."
+    # TODO: bail if currently running game
+    game = {
+       'start': 'now',
+       'type': 'typed_then_multi', 
+       'category_selection': 'vote',
+       'running': True,
+    }
+    bot_handler.storage.put("current_game", json.dumps(game))
+    bot_handler.send_reply(message, bot_response)
 
+def stop_game(message: Dict[str, Any], bot_handler: Any) -> None:
+    if bot_handler.storage.contains("current_game"):
+        game = json.loads(bot_handler.storage.get("current_game"))
+        print("game=", game)
+        if game.get('running') is True:
+ 
+            bot_response = "Stopping Game..."
+            # TODO print stats
+            bot_handler.storage.put("current_game", json.dumps({}))
+            bot_handler.send_reply(message, bot_response)
+            return
+    bot_handler.send_reply(message, "game not running...")
+   
 def parse_answer(query: str) -> Tuple[str, str]:
     m = re.match(r'answer\s+(Q...)\s+(.)', query)
     if not m:
@@ -129,50 +124,6 @@ def get_quiz_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         correct_letter=correct_letter,
     )  # type: Dict[str, Any]
     return quiz
-
-def generate_quiz_id(storage: Any) -> str:
-    try:
-        quiz_num = storage.get('quiz_id')
-    except (KeyError, TypeError):
-        quiz_num = 0
-    quiz_num += 1
-    quiz_num = quiz_num % (1000)
-    storage.put('quiz_id', quiz_num)
-    quiz_id = 'Q%03d' % (quiz_num,)
-    return quiz_id
-
-def format_quiz_for_widget(quiz_id: str, quiz: Dict[str, Any]) -> str:
-    widget_type = 'zform'
-    question = quiz['question']
-    answers = quiz['answers']
-
-    heading = quiz_id + ': ' + question
-
-    def get_choice(letter: str) -> Dict[str, str]:
-        answer = answers[letter]
-        reply = 'answer ' + quiz_id + ' ' + letter
-
-        return dict(
-            type='multiple_choice',
-            short_name=letter,
-            long_name=answer,
-            reply=reply,
-        )
-
-    choices = [get_choice(letter) for letter in 'ABCD']
-
-    extra_data = dict(
-        type='choices',
-        heading=heading,
-        choices=choices,
-    )
-
-    widget_content = dict(
-        widget_type=widget_type,
-        extra_data=extra_data,
-    )
-    payload = json.dumps(widget_content)
-    return payload
 
 def format_quiz_for_markdown(quiz_id: str, quiz: Dict[str, Any]) -> str:
     question = quiz['question']
