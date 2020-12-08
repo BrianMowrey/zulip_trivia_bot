@@ -11,39 +11,141 @@ class NotAvailableException(Exception):
 class InvalidAnswerException(Exception):
     pass
 
-class TriviaQuizHandler:
+class OpenTDB(object):
+    def __init__(self, question_type = None):
+       print("OpenTDB init")
+       self.session_token = self.get_session_token()
+       self.categories = self.get_categories()
+       self.question_type = question_type
+       self.voting_categories = []
+
+    def get_session_token(self):
+       # I'm not sure why but opentdb.com isn't verifying
+       res = requests.get('https://opentdb.com/api_token.php?command=request', verify=False)
+       data = res.json()
+       #TODO: error handling for these requests...
+       print("res=", data)
+       if(data.get('response_code') == 0):
+           return data.get('token')
+       
+    def get_categories(self):
+        res = requests.get('https://opentdb.com/api_category.php', verify=False)
+        data = res.json()
+        print("[cat] data=", data)
+        return data.get('trivia_categories')
+
+class TriviaGame:
+    def __init__(self, message, opentdb=None):
+        """
+        inits a new game from message
+        """
+        self.type = 'typed_then_multi'
+        self.category_selection = 'vote'
+        self.running = True
+        self.phase = 'start'
+        self.difficulty = 'medium'
+        if opentdb:
+            self.tdb = opentdb
+        else:
+             self.tdb = OpenTDB(question_type = 'multiple')
+
+    def start(self):
+        self.running = True
+
+    def is_running(self):
+        return self.running
+
+    def voting_categories(self, num=5):
+        """
+        returns num categories from list
+        also sets internal list so we can select from list
+        once they vote
+        """
+        print("getting sampling from : ", self.tdb.categories)
+        self.voting_categories = random.sample(self.tdb.categories, num)
+        return self.voting_categories
+
+    def to_json(self):
+        # TODO write this to dump object to storage
+        """
+            dumps game to json (for bot_storage)
+        """
+        return json.dumps({})        
+
+class TriviaGameHandler:
+    def initialize(self, bot_handler):
+        print('TriviaGame initialize')
+        self.bot_handler = bot_handler
+        self.tdb = OpenTDB(question_type='multiple')
+        self.bot_handler._client.call_on_each_event(self.handle_event) 
+        #self.client = self.bot_handler._client
+        #initialize here so I'm just doing categories/token once
+        
     def usage(self) -> str:
         return '''
             This plugin will give users a trivia question from
             the open trivia database at opentdb.com.'''
 
-    def handle_message(self, message: Dict[str, Any], bot_handler: Any) -> None:
+    def handle_event(self, event: Dict[str, Any]) -> None:
+        print("[event] event: ", event)
+        if event.get('type') == 'message':
+             message = event.get('message');
+             print("subject: ", message.get('subject'))
+             if message.get('subject') == 'game':
+                 query = message['content']
+                 print("found game message: ", message['content'])
+                 if query == 'start game':
+                     self.start_new_game(message)
+                     return
+
+        # reaction event:
+        # [event] event:  {'op': 'add', 'message_id': 1230144, 'emoji_name': 'one', 'id': 2, 'reaction_type': 'unicode_emoji', 'emoji_code': '0031-20e3', 'type': 'reaction', 'user': {'user_id': 9, 'full_name': 'Brian Mowrey', 'email': 'brian@protectchildren.ca'}}        
+
+    def handle_message(self, message: Dict[str, Any]) -> None:
+        # don't do anything here since it's all handled in events
+        return
         print("message=", message)
         query = message['content']
         print("query=",query)
         if query == 'start game':
-                start_new_game(message, bot_handler)
+                start_new_game(message)
                 return
         elif query == 'stop game':
-                stop_game(message, bot_handler)
+                stop_game(message)
         else:
            # anything else is a answer to a question
            pass
-def get_quiz_from_id(quiz_id: str, bot_handler: Any) -> str:
-    return bot_handler.storage.get(quiz_id)
 
-def start_new_game(message: Dict[str, Any], bot_handler: Any) -> None:
-    bot_response = "Starting Game..."
-    # TODO: bail if currently running game
-    game = {
-       'start': 'now',
-       'type': 'typed_then_multi', 
-       'category_selection': 'vote',
-       'running': True,
-    }
-    bot_handler.storage.put("current_game", json.dumps(game))
-    bot_handler.send_reply(message, bot_response)
+    def start_new_game(self, message: Dict[str, Any]) -> None:
+        bot_response = "Starting Game..."
+        # TODO: bail if currently running game
+        game = TriviaGame(message=message, opentdb=self.tdb)
+        print("starting game: ", game);
+        self.bot_handler.storage.put("current_game", game.to_json()) 
+        self.bot_handler.send_reply(message, bot_response)
+        voting_categories = game.voting_categories()
+        print("voting categories: ", voting_categories)
+        response = "**Vote on Category**\n"
+        for index, cat in enumerate(voting_categories):
+            response += str(index + 1) + ". " + cat.get('name') + "\n"
+        
+        res = self.bot_handler.send_reply(message, response)
+        print("reply res: ", res)
+        if res.get('result') == 'success':
+            print("SUCCESS")
+            message_id = res.get('id')
+            print("message_id=", message_id)
+            for reaction in list([('one', '0031-20e3'), ('two', '0032-20e3'), ('three', '0033-20e3'), ('four', '0034-20e3'), ('five', '0035-20e3')]):
+                print("adding reaction: ", reaction)
+                reaction_res = self.bot_handler._client.add_reaction({
+                    'message_id': message_id, 
+                    'emoji_name': reaction[0],
+                    'emoji_code': reaction[1],  # this isn't needed in newer zulips...
+                    'reaction_type': 'unicode_emoji',
+                })
+                print("reaction_res: ", reaction_res)
 
+        
 def stop_game(message: Dict[str, Any], bot_handler: Any) -> None:
     if bot_handler.storage.contains("current_game"):
         game = json.loads(bot_handler.storage.get("current_game"))
@@ -183,4 +285,4 @@ def handle_answer(quiz: Dict[str, Any], option: str, quiz_id: str,
     return start_new_question, response
 
 
-handler_class = TriviaQuizHandler
+handler_class = TriviaGameHandler
