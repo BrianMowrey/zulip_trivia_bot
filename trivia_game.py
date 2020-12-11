@@ -45,6 +45,8 @@ class TriviaGame:
         self.running = True
         self.phase = phase
         self.difficulty = 'medium'
+        # store message_ids so we know what the reaction is for
+        self.message_id = {}
         if opentdb:
             self.tdb = opentdb
         else:
@@ -64,7 +66,7 @@ class TriviaGame:
         self.phase = 'category_vote'
         return self.voting_categories
 
-    def set_message_id(key, message_id):
+    def set_message_id(self, key, message_id):
        """
        sets message id for certain messages
        """
@@ -85,8 +87,8 @@ class TriviaGame:
         })        
     
     @classmethod
-    def from_message(cls, message):
-        return cls()
+    def from_message(cls, message, opentdb=None):
+        return cls(opentdb=opentdb)
 
     @classmethod
     def from_dict(cls, from_dict):
@@ -143,7 +145,7 @@ class TriviaGameHandler:
     def start_new_game(self, message: Dict[str, Any]) -> None:
         bot_response = "Starting Game..."
         # TODO: bail if currently running game
-        game = TriviaGame(message=message, opentdb=self.tdb)
+        game = TriviaGame.from_message(message=message, opentdb=self.tdb)
         print("starting game: ", game);
         self.bot_handler.storage.put("current_game", game.to_json()) 
         self.bot_handler.send_reply(message, bot_response)
