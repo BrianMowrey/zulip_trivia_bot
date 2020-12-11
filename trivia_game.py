@@ -3,6 +3,7 @@ import json
 import requests
 import random
 import re
+import time
 from typing import Optional, Any, Dict, Tuple
 
 class NotAvailableException(Exception):
@@ -17,7 +18,7 @@ class OpenTDB(object):
        self.session_token = self.get_session_token()
        self.categories = self.get_categories()
        self.question_type = question_type
-       self.voting_categories = []
+       self.message_ids = {}
 
     def get_session_token(self):
        # I'm not sure why but opentdb.com isn't verifying
@@ -35,14 +36,14 @@ class OpenTDB(object):
         return data.get('trivia_categories')
 
 class TriviaGame:
-    def __init__(self, message, opentdb=None):
+    def __init__(self, opentdb=None, phase='start'):
         """
-        inits a new game from message
+        inits a new game
         """
         self.type = 'typed_then_multi'
         self.category_selection = 'vote'
         self.running = True
-        self.phase = 'start'
+        self.phase = phase
         self.difficulty = 'medium'
         if opentdb:
             self.tdb = opentdb
@@ -50,10 +51,7 @@ class TriviaGame:
              self.tdb = OpenTDB(question_type = 'multiple')
 
     def start(self):
-        self.running = True
-
-    def is_running(self):
-        return self.running
+        self.phase = start
 
     def voting_categories(self, num=5):
         """
@@ -63,14 +61,39 @@ class TriviaGame:
         """
         print("getting sampling from : ", self.tdb.categories)
         self.voting_categories = random.sample(self.tdb.categories, num)
+        self.phase = 'category_vote'
         return self.voting_categories
+
+    def set_message_id(key, message_id):
+       """
+       sets message id for certain messages
+       """
+       # I do this reverse for lookup
+       self.message_id[message_id] = key
 
     def to_json(self):
         # TODO write this to dump object to storage
         """
             dumps game to json (for bot_storage)
         """
-        return json.dumps({})        
+        return json.dumps({
+            'type': self.type,
+            'category_selection': self.category_selection,
+            'phase': self.phase,
+            'difficulty': self.difficulty,
+            
+        })        
+    
+    @classmethod
+    def from_message(cls, message):
+        return cls()
+
+    @classmethod
+    def from_dict(cls, from_dict):
+        """
+        generates game from dict (from json)
+        """
+        return cls(phase=from_dict.get('phase'))
 
 class TriviaGameHandler:
     def initialize(self, bot_handler):
@@ -80,6 +103,7 @@ class TriviaGameHandler:
         self.bot_handler._client.call_on_each_event(self.handle_event) 
         #self.client = self.bot_handler._client
         #initialize here so I'm just doing categories/token once
+        self.game = None
         
     def usage(self) -> str:
         return '''
@@ -95,7 +119,7 @@ class TriviaGameHandler:
                  query = message['content']
                  print("found game message: ", message['content'])
                  if query == 'start game':
-                     self.start_new_game(message)
+                     self.game = self.start_new_game(message)
                      return
 
         # reaction event:
@@ -134,9 +158,12 @@ class TriviaGameHandler:
         if res.get('result') == 'success':
             print("SUCCESS")
             message_id = res.get('id')
+            game.set_message_id('voting_categories', message_id)
             print("message_id=", message_id)
+            time.sleep(0.5)
             for reaction in list([('one', '0031-20e3'), ('two', '0032-20e3'), ('three', '0033-20e3'), ('four', '0034-20e3'), ('five', '0035-20e3')]):
                 print("adding reaction: ", reaction)
+                time.sleep(0.5)                
                 reaction_res = self.bot_handler._client.add_reaction({
                     'message_id': message_id, 
                     'emoji_name': reaction[0],
@@ -144,7 +171,7 @@ class TriviaGameHandler:
                     'reaction_type': 'unicode_emoji',
                 })
                 print("reaction_res: ", reaction_res)
-
+        return game
         
 def stop_game(message: Dict[str, Any], bot_handler: Any) -> None:
     if bot_handler.storage.contains("current_game"):
